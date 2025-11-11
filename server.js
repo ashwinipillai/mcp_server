@@ -337,4 +337,3 @@ app.listen(PORT, () => {
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`💾 View memory: http://localhost:${PORT}/memory`);
 });
-```
