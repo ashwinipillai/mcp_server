@@ -3,14 +3,13 @@ import express from 'express';
 const app = express();
 app.use(express.json());
 
-// Storage for demo
+// Storage
 const memory = {
   users: [],
   preferences: [],
   tasks: []
 };
 
-// Log everything for learning
 function logRequest(label, data) {
   console.log('\n' + '='.repeat(60));
   console.log(`📍 ${label}`);
@@ -19,8 +18,26 @@ function logRequest(label, data) {
   console.log('='.repeat(60) + '\n');
 }
 
-app.post('/mcp', async (req, res) => {
-  logRequest('INCOMING REQUEST FROM VAPI', {
+// SSE endpoint - VAPI connects here first
+app.get('/sse', (req, res) => {
+  console.log('📡 SSE connection initiated by VAPI');
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+
+  // Send endpoint info
+  res.write('event: endpoint\n');
+  res.write(`data: ${req.protocol}://${req.get('host')}/message\n\n`);
+
+  console.log('✅ SSE connection established');
+});
+
+// Message endpoint - VAPI sends JSON-RPC requests here
+app.post('/message', async (req, res) => {
+  logRequest('REQUEST FROM VAPI', {
     method: req.body.method,
     params: req.body.params,
     headers: {
@@ -34,15 +51,15 @@ app.post('/mcp', async (req, res) => {
   try {
     let result;
 
-    // Initialize handshake
+    // Initialize
     if (method === 'initialize') {
       result = {
-        protocolVersion: "2024-11-05",
+        protocolVersion: "2024-11-05",  // SSE version
         capabilities: {
           tools: {}
         },
         serverInfo: {
-          name: "vapi-learning-mcp",
+          name: "vapi-learning-mcp-sse",
           version: "1.0.0"
         }
       };
@@ -51,13 +68,13 @@ app.post('/mcp', async (req, res) => {
       return res.json({ jsonrpc, id, result });
     }
 
-    // Tool discovery - THIS IS WHERE VAPI LEARNS ABOUT YOUR TOOLS
+    // Tool discovery
     if (method === 'tools/list') {
       result = {
         tools: [
           {
             name: "save_user_profile",
-            description: "Save a user's profile information. Use when user shares personal details like name, age, location, or interests.",
+            description: "Save user profile information. Extract name, age, location, email, and interests from natural language.",
             inputSchema: {
               type: "object",
               properties: {
@@ -88,22 +105,22 @@ app.post('/mcp', async (req, res) => {
           },
           {
             name: "set_preference",
-            description: "Store a user preference or setting. Use for things like favorite color, preferred language, notification settings, etc.",
+            description: "Store a user preference. Use for settings like favorite color, language, etc.",
             inputSchema: {
               type: "object",
               properties: {
                 key: {
                   type: "string",
-                  description: "The preference name (e.g., 'favorite_color', 'language')"
+                  description: "Preference name (e.g., 'favorite_color')"
                 },
                 value: {
                   type: "string",
-                  description: "The preference value"
+                  description: "Preference value"
                 },
                 category: {
                   type: "string",
                   enum: ["personal", "system", "notification"],
-                  description: "Category of the preference"
+                  description: "Category type"
                 }
               },
               required: ["key", "value"]
@@ -111,31 +128,31 @@ app.post('/mcp', async (req, res) => {
           },
           {
             name: "create_task",
-            description: "Create a task or reminder. Use when user wants to remember to do something.",
+            description: "Create a task or reminder",
             inputSchema: {
               type: "object",
               properties: {
                 title: {
                   type: "string",
-                  description: "Brief task title"
+                  description: "Task title"
                 },
                 description: {
                   type: "string",
-                  description: "Detailed task description"
+                  description: "Detailed description"
                 },
                 priority: {
                   type: "string",
                   enum: ["low", "medium", "high", "urgent"],
-                  description: "Task priority level"
+                  description: "Priority level"
                 },
                 due_date: {
                   type: "string",
-                  description: "When the task is due (natural language like 'tomorrow' or '2024-12-25')"
+                  description: "Due date (natural language)"
                 },
                 tags: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Tags to categorize the task"
+                  description: "Task tags"
                 }
               },
               required: ["title"]
@@ -143,13 +160,13 @@ app.post('/mcp', async (req, res) => {
           },
           {
             name: "search_memory",
-            description: "Search stored information by keyword. Use when user asks 'what do you know about...?' or 'what did I tell you about...?'",
+            description: "Search stored information",
             inputSchema: {
               type: "object",
               properties: {
                 query: {
                   type: "string",
-                  description: "Search term or question"
+                  description: "Search query"
                 },
                 type: {
                   type: "string",
@@ -163,35 +180,30 @@ app.post('/mcp', async (req, res) => {
         ]
       };
 
-      logRequest('TOOLS LIST RESPONSE', result);
+      logRequest('TOOLS LIST (VAPI discovers these)', result);
       return res.json({ jsonrpc, id, result });
     }
 
-    // Tool invocation - THIS IS WHERE VAPI CALLS YOUR TOOL WITH PARAMETERS
+    // Tool invocation
     if (method === 'tools/call') {
       const { name, arguments: args } = params;
 
-      logRequest('TOOL CALL - PARAMETERS EXTRACTED BY LLM', {
+      logRequest('TOOL CALL - LLM EXTRACTED PARAMETERS', {
         toolName: name,
-        extractedArguments: args,
-        note: 'These parameters were extracted from natural language by the LLM'
+        extractedArguments: args
       });
 
       let responseText;
 
       switch (name) {
         case 'save_user_profile':
-          memory.users.push({
-            ...args,
-            savedAt: new Date().toISOString()
-          });
-
+          memory.users.push({ ...args, savedAt: new Date().toISOString() });
           responseText = JSON.stringify({
             success: true,
-            message: `Profile saved for ${args.name}`,
-            extractedParameters: {
-              required: { name: args.name },
-              optional: {
+            message: `✅ Profile saved for ${args.name}`,
+            parameters: {
+              required_extracted: { name: args.name },
+              optional_extracted: {
                 age: args.age || 'not provided',
                 email: args.email || 'not provided',
                 location: args.location || 'not provided',
@@ -202,18 +214,14 @@ app.post('/mcp', async (req, res) => {
           break;
 
         case 'set_preference':
-          memory.preferences.push({
-            ...args,
-            savedAt: new Date().toISOString()
-          });
-
+          memory.preferences.push({ ...args, savedAt: new Date().toISOString() });
           responseText = JSON.stringify({
             success: true,
-            message: `Preference '${args.key}' set to '${args.value}'`,
-            extractedParameters: {
+            message: `✅ ${args.key} = ${args.value}`,
+            parameters: {
               key: args.key,
               value: args.value,
-              category: args.category || 'not specified (default will apply)'
+              category: args.category || 'default'
             }
           }, null, 2);
           break;
@@ -225,17 +233,16 @@ app.post('/mcp', async (req, res) => {
             createdAt: new Date().toISOString()
           };
           memory.tasks.push(task);
-
           responseText = JSON.stringify({
             success: true,
-            message: `Task created: "${args.title}"`,
+            message: `✅ Task created: "${args.title}"`,
             taskId: task.id,
-            extractedParameters: {
+            parameters: {
               required: { title: args.title },
               optional: {
-                description: args.description || 'no description',
+                description: args.description || 'none',
                 priority: args.priority || 'not set',
-                due_date: args.due_date || 'no due date',
+                due_date: args.due_date || 'no deadline',
                 tags: args.tags || []
               }
             }
@@ -245,7 +252,6 @@ app.post('/mcp', async (req, res) => {
         case 'search_memory':
           const searchType = args.type || 'all';
           const query = args.query.toLowerCase();
-
           let results = [];
 
           if (searchType === 'all' || searchType === 'users') {
@@ -253,13 +259,11 @@ app.post('/mcp', async (req, res) => {
               JSON.stringify(u).toLowerCase().includes(query)
             ));
           }
-
           if (searchType === 'all' || searchType === 'preferences') {
             results.push(...memory.preferences.filter(p =>
               JSON.stringify(p).toLowerCase().includes(query)
             ));
           }
-
           if (searchType === 'all' || searchType === 'tasks') {
             results.push(...memory.tasks.filter(t =>
               JSON.stringify(t).toLowerCase().includes(query)
@@ -267,10 +271,9 @@ app.post('/mcp', async (req, res) => {
           }
 
           responseText = JSON.stringify({
-            success: true,
             query: args.query,
-            searchType: searchType,
-            resultsFound: results.length,
+            type: searchType,
+            found: results.length,
             results: results
           }, null, 2);
           break;
@@ -280,26 +283,17 @@ app.post('/mcp', async (req, res) => {
       }
 
       result = {
-        content: [
-          {
-            type: "text",
-            text: responseText
-          }
-        ]
+        content: [{ type: "text", text: responseText }]
       };
 
-      logRequest('TOOL RESPONSE BACK TO VAPI', result);
+      logRequest('RESPONSE TO VAPI', result);
       return res.json({ jsonrpc, id, result });
     }
 
-    // Unknown method
     return res.status(400).json({
       jsonrpc,
       id,
-      error: {
-        code: -32601,
-        message: `Method not found: ${method}`
-      }
+      error: { code: -32601, message: `Method not found: ${method}` }
     });
 
   } catch (error) {
@@ -307,10 +301,7 @@ app.post('/mcp', async (req, res) => {
     return res.status(500).json({
       jsonrpc,
       id,
-      error: {
-        code: -32603,
-        message: error.message
-      }
+      error: { code: -32603, message: error.message }
     });
   }
 });
@@ -318,7 +309,8 @@ app.post('/mcp', async (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    server: 'VAPI Learning MCP',
+    protocol: 'SSE (Legacy)',
+    note: 'VAPI currently uses SSE transport',
     stats: {
       users: memory.users.length,
       preferences: memory.preferences.length,
@@ -333,7 +325,8 @@ app.get('/memory', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 VAPI Learning MCP Server on port ${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`💾 View memory: http://localhost:${PORT}/memory`);
+  console.log(`🚀 VAPI MCP Server (SSE Protocol) on port ${PORT}`);
+  console.log(`📡 SSE endpoint: /sse`);
+  console.log(`📨 Message endpoint: /message`);
+  console.log(`📊 Health: /health`);
 });
